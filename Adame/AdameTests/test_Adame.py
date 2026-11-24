@@ -142,6 +142,133 @@ Tests that the create-command writes the key 'logtargetfolder', which is require
         finally:
             environment_for_test.dispose()
 
+    def test_command_create_writes_hook_script_keys(self):
+        """UnitTest
+Tests that the create-command writes the keys for the hook-scripts which are executed before and after the container-start and the container-stop"""
+
+        # arrange
+
+        environment_for_test = EnvironmentForTest()
+
+        try:
+
+            # act
+
+            environment_for_test.create()
+
+            # assert
+
+            configuration = configparser.ConfigParser()
+            configuration.read(environment_for_test.adame_configuration_file)
+            for key in ["prestartscript", "poststartscript", "prestopscript", "poststopscript"]:
+                assert configuration.has_option("general", key)
+                assert configuration.get("general", key) == ""
+            assert not configuration.has_option("general", "prescript")
+            assert not configuration.has_option("general", "postscript")
+
+        finally:
+            environment_for_test.dispose()
+
+    def test_migration_moves_legacy_hook_script_keys(self):
+        """UnitTest
+Tests that loading a configuration with the repository-format-version v2.0.7 moves the value of 'prescript' to 'prestartscript' and the value of 'postscript' to 'poststopscript'"""
+
+        # arrange
+
+        environment_for_test = EnvironmentForTest()
+
+        try:
+
+            environment_for_test.create()
+            configuration = configparser.ConfigParser()
+            configuration.read(environment_for_test.adame_configuration_file)
+            configuration.set("general", "formatversion", "2.0.7")
+            for key in ["prestartscript", "poststartscript", "prestopscript", "poststopscript"]:
+                configuration.remove_option("general", key)
+            configuration.set("general", "prescript", "PreStart.sh")
+            configuration.set("general", "postscript", "PostStop.sh")
+            with open(environment_for_test.adame_configuration_file, "w", encoding="utf-8") as file_writer:
+                configuration.write(file_writer)
+
+            # act
+
+            environment_for_test.adame.checkintegrity(environment_for_test.adame_configuration_file)
+
+            # assert
+
+            migrated_configuration = configparser.ConfigParser()
+            migrated_configuration.read(environment_for_test.adame_configuration_file)
+            assert migrated_configuration.get("general", "formatversion") == "2.1.0"
+            assert not migrated_configuration.has_option("general", "prescript")
+            assert not migrated_configuration.has_option("general", "postscript")
+            assert migrated_configuration.get("general", "prestartscript") == "PreStart.sh"
+            assert migrated_configuration.get("general", "poststartscript") == ""
+            assert migrated_configuration.get("general", "prestopscript") == ""
+            assert migrated_configuration.get("general", "poststopscript") == "PostStop.sh"
+
+        finally:
+            environment_for_test.dispose()
+
+    def test_commands_start_and_stop_run_hook_scripts(self):
+        """UnitTest
+Tests that the start-command runs the configured pre-start-script and post-start-script and that the stop-command runs the configured pre-stop-script and post-stop-script"""
+
+        # arrange
+
+        environment_for_test = EnvironmentForTest()
+
+        try:
+
+            environment_for_test.create()
+            configuration = configparser.ConfigParser()
+            configuration.read(environment_for_test.adame_configuration_file)
+            configuration.set("general", "prestartscript", "PreStart.sh")
+            configuration.set("general", "poststartscript", "PostStart.sh")
+            configuration.set("general", "prestopscript", "PreStop.sh")
+            configuration.set("general", "poststopscript", "PostStop.sh")
+            with open(environment_for_test.adame_configuration_file, "w", encoding="utf-8") as file_writer:
+                configuration.write(file_writer)
+            # The IDS is disabled because this testcase only verifies the execution of the hook-scripts.
+            security_configuration_file = os.path.join(environment_for_test.adame._internal_configuration_folder, "Security", "Security.configuration")
+            security_configuration = configparser.ConfigParser()
+            security_configuration.read(security_configuration_file)
+            security_configuration.set("general", "enableids", "false")
+            with open(security_configuration_file, "w", encoding="utf-8") as file_writer:
+                security_configuration.write(file_writer)
+            configuration_folder = re.escape(environment_for_test.adame._internal_configuration_folder)
+            environment_for_test.adame._internal_sc.register_mock_program_call("sh", r".*PreStart\.sh", configuration_folder, 0, "", "", 80)
+            environment_for_test.adame._internal_sc.register_mock_program_call("docker",  re.escape(f"compose --project-name {environment_for_test.adame._internal_get_container_name()} up --detach --build --quiet-pull --force-recreate --always-recreate-deps"), configuration_folder, 0, "", "", 40)
+            environment_for_test.adame._internal_sc.register_mock_program_call("sh", r".*PostStart\.sh", configuration_folder, 0, "", "", 81)
+
+            # act
+
+            start_exitcode = environment_for_test.adame.start(environment_for_test.adame_configuration_file)
+
+            # assert
+
+            assert start_exitcode == 0
+            environment_for_test.adame._internal_verify_no_pending_mock_process_queries()
+            environment_for_test.adame._internal_sc.verify_no_pending_mock_program_calls()
+
+            # arrange
+
+            environment_for_test.adame._internal_sc.register_mock_program_call("sh", r".*PreStop\.sh", configuration_folder, 0, "", "", 82)
+            environment_for_test.adame._internal_sc.register_mock_program_call("docker",  re.escape(f"compose --project-name {environment_for_test.adame._internal_get_container_name()} down"), configuration_folder, 0, "", "", 68)
+            environment_for_test.adame._internal_sc.register_mock_program_call("sh", r".*PostStop\.sh", configuration_folder, 0, "", "", 83)
+
+            # act
+
+            stop_exitcode = environment_for_test.adame.stop(environment_for_test.adame_configuration_file)
+
+            # assert
+
+            assert stop_exitcode == 0
+            environment_for_test.adame._internal_verify_no_pending_mock_process_queries()
+            environment_for_test.adame._internal_sc.verify_no_pending_mock_program_calls()
+
+        finally:
+            environment_for_test.dispose()
+
     def test_command_start(self):
         """UnitTest
 Tests that the start-command works as expected"""

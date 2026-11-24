@@ -8,6 +8,24 @@ The following configuration-items are available:
 
 TODO
 
+### Hook-scripts
+
+The following configuration-items in the section `general` allow to run a custom shell-script (executed with `sh`) at certain points in time when the container gets started or stopped (for example by the commands `start`, `stop`, `startadvanced` and `stopadvanced`):
+
+| Configuration-item | Point in time when the script will be executed |
+| --- | --- |
+| `prestartscript` | Before the container will be started. |
+| `poststartscript` | After the container was started. |
+| `prestopscript` | Before the container will be stopped. |
+| `poststopscript` | After the container was stopped. |
+
+If the value of a configuration-item is empty then no script will be executed.
+A relative path will be resolved relative to the folder `Configuration`. The script will also be executed with the folder `Configuration` as working-directory.
+
+The scripts `poststartscript` and `poststopscript` will also be executed if the start respectively the stop of the container failed.
+
+These configuration-items replace the configuration-items `prescript` (now `prestartscript`) and `postscript` (now `poststopscript`) which were used before Adame v2.1.0. Existing repositories will be migrated automatically.
+
 ## ApplicationProvidedSecurityInformation.xml
 
 TODO

@@ -17,7 +17,7 @@ import psutil
 import yaml
 
 product_name = "Adame"
-version = "2.0.7"
+version = "2.1.0"
 __version__ = version
 versioned_product_name = f"{product_name} v{version}"
 
@@ -28,8 +28,10 @@ class Adame:
     __adame_commit_author_name: str = product_name
     __configuration_section_general: str = "general"
     __configuration_section_general_key_networkinterface: str = "networkinterface"
-    __configuration_section_general_key_prescript: str = "prescript"
-    __configuration_section_general_key_postscript: str = "postscript"
+    __configuration_section_general_key_prestartscript: str = "prestartscript"
+    __configuration_section_general_key_poststartscript: str = "poststartscript"
+    __configuration_section_general_key_prestopscript: str = "prestopscript"
+    __configuration_section_general_key_poststopscript: str = "poststopscript"
     __configuration_section_general_key_repositoryid: str = "repositoryid"
     __configuration_section_general_key_repositoryversion: str = "repositoryversion"
     __configuration_section_general_key_formatversion: str = "formatversion"
@@ -793,11 +795,13 @@ IDS-process:{ids_is_running_as_string}
         else:
             local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_repositoryid] = str(uuid.uuid4())
         local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_networkinterface] = "eth0"
-        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_prescript] = ""
-        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_postscript] = ""
+        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_prestartscript] = ""
+        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_poststartscript] = ""
+        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_prestopscript] = ""
+        local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_poststopscript] = ""
         local_configparser[self.__configuration_section_general][self.__configuration_section_general_key_logtargetfolder] = ""
 
-        with open(self.__configuration_file, 'w+', encoding=self.encoding) as configfile:
+        with open(self.__configuration_file, 'w+', encoding=self.encoding, newline="\n") as configfile:
             local_configparser.write(configfile)
         self.__log_information(f"Created file '{self.__configuration_file}'", True)
 
@@ -814,7 +818,7 @@ IDS-process:{ids_is_running_as_string}
 
     @GeneralUtilities.check_arguments
     def __save_configfile(self, file: str, configuration: configparser.ConfigParser) -> None:
-        with open(file, 'w', encoding=self.encoding) as file_writer:
+        with open(file, 'w', encoding=self.encoding, newline="\n") as file_writer:
             configuration.write(file_writer)
 
     @GeneralUtilities.check_arguments
@@ -843,6 +847,21 @@ IDS-process:{ids_is_running_as_string}
             previous_config.set(self.__configuration_section_general, self.__configuration_section_general_key_logtargetfolder, "")
             self.__save_configfile(configuration_file, previous_config)
 
+    def __migrate_to_v_2_1_0(self, configuration_file: str, previous_config: configparser.ConfigParser) -> None:
+        # The key "prescript" was executed before the container-start and the key "postscript" was executed after the container-stop.
+        # Since v2.1.0 there are dedicated keys for before and after the container-start and before and after the container-stop.
+        legacy_key_prescript: str = "prescript"
+        legacy_key_postscript: str = "postscript"
+        prestartscript: str = previous_config.get(self.__configuration_section_general, legacy_key_prescript)
+        poststopscript: str = previous_config.get(self.__configuration_section_general, legacy_key_postscript)
+        previous_config.remove_option(self.__configuration_section_general, legacy_key_prescript)
+        previous_config.remove_option(self.__configuration_section_general, legacy_key_postscript)
+        previous_config.set(self.__configuration_section_general, self.__configuration_section_general_key_prestartscript, prestartscript)
+        previous_config.set(self.__configuration_section_general, self.__configuration_section_general_key_poststartscript, "")
+        previous_config.set(self.__configuration_section_general, self.__configuration_section_general_key_prestopscript, "")
+        previous_config.set(self.__configuration_section_general, self.__configuration_section_general_key_poststopscript, poststopscript)
+        self.__save_configfile(configuration_file, previous_config)
+
     @GeneralUtilities.check_arguments
     def __migrate_configuration_if_required(self, configuration_file: str, configuration: configparser.ConfigParser) -> configparser.ConfigParser:
         # Migration should only be done when the repository already exist and the repository-creation-process is already completed.
@@ -863,6 +882,8 @@ IDS-process:{ids_is_running_as_string}
                     config_format_version = self.__migrate_overhead(config_format_version, '1.2.52', lambda:  self.__migrate_to_v_1_2_52(configuration_file, configuration))
                 if config_format_version < parse('2.0.3'):
                     config_format_version = self.__migrate_overhead(config_format_version, '2.0.3', lambda:  self.__migrate_to_v_2_0_3(configuration_file, configuration))
+                if config_format_version < parse('2.1.0'):
+                    config_format_version = self.__migrate_overhead(config_format_version, '2.1.0', lambda:  self.__migrate_to_v_2_1_0(configuration_file, configuration))
 
                 configuration.set(self.__configuration_section_general, self.__configuration_section_general_key_formatversion, version)
                 self.__save_configfile(configuration_file, configuration)
@@ -1006,7 +1027,7 @@ Logs/Overhead/**
         securityconfiguration.add_section(self.__securityconfiguration_section_general)
         self.__add_default_ids_configuration_to_securityconfiguration(securityconfiguration, gpgkey_of_owner)
 
-        with open(self.__propertiesconfiguration_file, 'w+', encoding=self.encoding) as configfile:
+        with open(self.__propertiesconfiguration_file, 'w+', encoding=self.encoding, newline="\n") as configfile:
             securityconfiguration.write(configfile)
 
     @GeneralUtilities.check_arguments
@@ -1077,6 +1098,7 @@ The license of this repository is defined in the file `License.txt`.
 
     @GeneralUtilities.check_arguments
     def __stop_container(self) -> bool:
+        self.__run_script_if_available(self.__configuration.get(self.__configuration_section_general, self.__configuration_section_general_key_prestopscript), "PreStopScript")
         projectname = self._internal_get_container_name()
         # TODO do "docker compose -p {projectname} stop"
         # TODO for each container in compose-project save the output of "docker logs {containername}" in the log-folder in the file "Container_{containername}.log"
@@ -1086,14 +1108,13 @@ The license of this repository is defined in the file `License.txt`.
             self.__log_information("Container was stopped", False, True, True)
         else:
             self.__log_warning("Container could not be stopped")
-        self.__run_script_if_available(self.__configuration.get(
-            self.__configuration_section_general, self.__configuration_section_general_key_postscript), "PostScript")
+        self.__run_script_if_available(self.__configuration.get(self.__configuration_section_general, self.__configuration_section_general_key_poststopscript), "PostStopScript")
         return success
 
     @GeneralUtilities.check_arguments
     def __start_container(self) -> bool:
         # TODO remove existing container if exist
-        self.__run_script_if_available(self.__configuration.get(self.__configuration_section_general, self.__configuration_section_general_key_prescript), "PreScript")
+        self.__run_script_if_available(self.__configuration.get(self.__configuration_section_general, self.__configuration_section_general_key_prestartscript), "PreStartScript")
         parameters_argument:str=""
         if os.path.isfile(os.path.join(self._internal_configuration_folder,"Parameters.env")):
             parameters_argument=parameters_argument+" --env-file Parameters.env"
@@ -1103,6 +1124,7 @@ The license of this repository is defined in the file `License.txt`.
             self.__log_information("Container was started", False, True, True)
         else:
             self.__log_warning("Container could not be started")
+        self.__run_script_if_available(self.__configuration.get(self.__configuration_section_general, self.__configuration_section_general_key_poststartscript), "PostStartScript")
         return success
 
     @GeneralUtilities.check_arguments
@@ -1270,7 +1292,7 @@ The license of this repository is defined in the file `License.txt`.
                 prefix = ''
             else:
                 prefix = '\n'
-            with open(self.__log_file_for_adame_overhead, "a", encoding="utf-8") as file:
+            with open(self.__log_file_for_adame_overhead, "a", encoding="utf-8", newline="\n") as file:
                 file.write(prefix+logentry)
 
     @GeneralUtilities.check_arguments
